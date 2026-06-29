@@ -1,4 +1,4 @@
-import { assignments, users, tokenUsage, dailyUsage, documents, rewriteJobs, stripePayments, stripeEvents, referenceDocuments, grades, rewrites, projects, projectSessions, tractatusArchive, type Assignment, type InsertAssignment, type User, type InsertUser, type TokenUsage, type InsertTokenUsage, type DailyUsage, type InsertDailyUsage, type Document, type InsertDocument, type RewriteJob, type InsertRewriteJob, type StripePayment, type InsertStripePayment, type StripeEvent, type InsertStripeEvent, type ReferenceDocument, type InsertReferenceDocument, type Grade, type InsertGrade, type Rewrite, type InsertRewrite, type Project, type InsertProject, type ProjectSession, type InsertProjectSession, type TractatusArchive, type InsertTractatusArchive } from "@shared/schema";
+import { assignments, users, documents, rewriteJobs, referenceDocuments, grades, rewrites, projects, projectSessions, tractatusArchive, type Assignment, type InsertAssignment, type User, type InsertUser, type Document, type InsertDocument, type RewriteJob, type InsertRewriteJob, type ReferenceDocument, type InsertReferenceDocument, type Grade, type InsertGrade, type Rewrite, type InsertRewrite, type Project, type InsertProject, type ProjectSession, type InsertProjectSession, type TractatusArchive, type InsertTractatusArchive } from "@shared/schema";
 import { db } from "./db";
 import { eq, isNull, and, sum, desc } from "drizzle-orm";
 
@@ -16,13 +16,6 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
   getUserByUsername(username: string): Promise<User | undefined>;
   getUserById(id: number): Promise<User | undefined>;
-  updateUserTokenBalance(userId: number, balance: number): Promise<void>;
-  
-  // Token usage methods
-  createTokenUsage(usage: InsertTokenUsage): Promise<TokenUsage>;
-  getDailyUsage(sessionId: string, date: string): Promise<DailyUsage | undefined>;
-  createOrUpdateDailyUsage(sessionId: string, date: string, tokens: number): Promise<void>;
-  getUserTokenBalance(userId: number): Promise<number>;
   
   // Anonymous to authenticated user migration
   migrateAnonymousAssignments(sessionId: string, userId: number): Promise<Assignment[]>;
@@ -34,18 +27,6 @@ export interface IStorage {
   getRewriteJob(id: string): Promise<RewriteJob | undefined>;
   updateRewriteJob(id: string, updates: Partial<RewriteJob>): Promise<void>;
   getRewriteJobs(limit?: number): Promise<RewriteJob[]>;
-  
-  // Stripe payment methods
-  createStripePayment(payment: InsertStripePayment): Promise<StripePayment>;
-  getStripePaymentBySessionId(sessionId: string): Promise<StripePayment | undefined>;
-  getAllStripePayments?(): Promise<StripePayment[]>;
-  updateStripePaymentStatus(sessionId: string, status: string): Promise<void>;
-  updateStripePaymentMetadata?(sessionId: string, metadata: any): Promise<void>;
-  completeStripePaymentAndCredit(sessionId: string, userId: number, tokens: number): Promise<{ alreadyCompleted: boolean; newBalance?: number }>;
-  
-  // Stripe event idempotency methods
-  createStripeEvent(event: InsertStripeEvent): Promise<StripeEvent>;
-  isEventProcessed(eventId: string): Promise<boolean>;
 
   // Reference document methods
   createReferenceDocument(document: InsertReferenceDocument): Promise<ReferenceDocument>;
@@ -203,50 +184,6 @@ export class DatabaseStorage implements IStorage {
     return user || undefined;
   }
 
-  async updateUserTokenBalance(userId: number, balance: number): Promise<void> {
-    await db
-      .update(users)
-      .set({ tokenBalance: balance })
-      .where(eq(users.id, userId));
-  }
-
-  // Token usage methods
-  async createTokenUsage(insertUsage: InsertTokenUsage): Promise<TokenUsage> {
-    const [usage] = await db
-      .insert(tokenUsage)
-      .values(insertUsage)
-      .returning();
-    return usage;
-  }
-
-  async getDailyUsage(sessionId: string, date: string): Promise<DailyUsage | undefined> {
-    const [usage] = await db
-      .select()
-      .from(dailyUsage)
-      .where(and(eq(dailyUsage.sessionId, sessionId), eq(dailyUsage.date, date)));
-    return usage || undefined;
-  }
-
-  async createOrUpdateDailyUsage(sessionId: string, date: string, tokens: number): Promise<void> {
-    const existing = await this.getDailyUsage(sessionId, date);
-    
-    if (existing) {
-      await db
-        .update(dailyUsage)
-        .set({ totalTokens: (existing.totalTokens || 0) + tokens })
-        .where(eq(dailyUsage.id, existing.id));
-    } else {
-      await db
-        .insert(dailyUsage)
-        .values({ sessionId, date, totalTokens: tokens });
-    }
-  }
-
-  async getUserTokenBalance(userId: number): Promise<number> {
-    const user = await this.getUserById(userId);
-    return user?.tokenBalance || 0;
-  }
-
   // Anonymous to authenticated user migration
   async migrateAnonymousAssignments(sessionId: string, userId: number): Promise<Assignment[]> {
     // Find all assignments for the anonymous session that don't have a userId
@@ -322,158 +259,6 @@ export class DatabaseStorage implements IStorage {
       .from(rewriteJobs)
       .orderBy(rewriteJobs.createdAt)
       .limit(limit);
-  }
-  
-  // Stripe payment methods
-  async createStripePayment(insertPayment: InsertStripePayment): Promise<StripePayment> {
-    const [payment] = await db
-      .insert(stripePayments)
-      .values(insertPayment)
-      .returning();
-    return payment;
-  }
-
-  async getStripePaymentBySessionId(sessionId: string): Promise<StripePayment | undefined> {
-    const [payment] = await db
-      .select()
-      .from(stripePayments)
-      .where(eq(stripePayments.stripeSessionId, sessionId));
-    return payment || undefined;
-  }
-
-  async updateStripePaymentStatus(sessionId: string, status: string): Promise<void> {
-    await db
-      .update(stripePayments)
-      .set({ 
-        status,
-        updatedAt: new Date(),
-        completedAt: status === 'completed' ? new Date() : undefined
-      })
-      .where(eq(stripePayments.stripeSessionId, sessionId));
-  }
-  
-  async completeStripePaymentAndCredit(sessionId: string, userId: number, tokens: number): Promise<{ alreadyCompleted: boolean; newBalance?: number }> {
-    // Use a transaction with proper concurrency control
-    return await db.transaction(async (tx) => {
-      let paymentId: number | null = null;
-      let updatedRows = 0;
-      
-      // First, try to atomically claim the payment by updating status from non-completed to completed
-      const existingPayments = await tx
-        .select()
-        .from(stripePayments)
-        .where(eq(stripePayments.stripeSessionId, sessionId));
-      
-      if (existingPayments.length > 0) {
-        const existingPayment = existingPayments[0];
-        
-        if (existingPayment.status === 'completed') {
-          // Already completed - safe to return early
-          return { alreadyCompleted: true };
-        }
-        
-        // Conditionally update to completed ONLY if current status is not completed
-        const result = await tx
-          .update(stripePayments)
-          .set({ 
-            status: 'completed',
-            updatedAt: new Date(),
-            completedAt: new Date()
-          })
-          .where(and(
-            eq(stripePayments.stripeSessionId, sessionId),
-            eq(stripePayments.status, existingPayment.status) // Only update if status hasn't changed
-          ))
-          .returning({ id: stripePayments.id });
-        
-        updatedRows = result.length;
-        if (updatedRows > 0) {
-          paymentId = result[0].id;
-        }
-      } else {
-        // No existing payment - try to insert as completed with conflict handling
-        try {
-          const result = await tx
-            .insert(stripePayments)
-            .values({
-              userId,
-              stripeSessionId: sessionId,
-              amount: 30, // Default amount
-              tokens,
-              status: 'completed',
-              completedAt: new Date(),
-              metadata: { webhookCreated: true }
-            })
-            .returning({ id: stripePayments.id });
-          
-          paymentId = result[0].id;
-          updatedRows = 1;
-        } catch (error) {
-          // If unique constraint violation, another webhook won the race
-          if (error.message?.includes('unique') || error.code === '23505') {
-            return { alreadyCompleted: true };
-          }
-          throw error;
-        }
-      }
-      
-      // Only credit tokens if we successfully claimed the payment (updated or inserted)
-      if (updatedRows === 0) {
-        return { alreadyCompleted: true };
-      }
-      
-      // Get current user balance and credit tokens
-      const [user] = await tx
-        .select()
-        .from(users)
-        .where(eq(users.id, userId));
-      
-      if (!user) {
-        throw new Error(`User ${userId} not found`);
-      }
-      
-      const newBalance = (user.tokenBalance || 0) + tokens;
-      
-      await tx
-        .update(users)
-        .set({ tokenBalance: newBalance })
-        .where(eq(users.id, userId));
-      
-      return { alreadyCompleted: false, newBalance };
-    });
-  }
-  
-  async createStripeEvent(insertEvent: InsertStripeEvent): Promise<StripeEvent> {
-    const [event] = await db
-      .insert(stripeEvents)
-      .values(insertEvent)
-      .returning();
-    return event;
-  }
-  
-  async getAllStripePayments(): Promise<StripePayment[]> {
-    return await db
-      .select()
-      .from(stripePayments)
-      .orderBy(stripePayments.createdAt);
-  }
-  
-  async updateStripePaymentMetadata(sessionId: string, metadata: any): Promise<void> {
-    await db
-      .update(stripePayments)
-      .set({ 
-        metadata,
-        updatedAt: new Date()
-      })
-      .where(eq(stripePayments.stripeSessionId, sessionId));
-  }
-  
-  async isEventProcessed(eventId: string): Promise<boolean> {
-    const [event] = await db
-      .select()
-      .from(stripeEvents)
-      .where(eq(stripeEvents.eventId, eventId));
-    return !!event;
   }
 
   // Bulk delete assignments for user cleanup
@@ -880,15 +665,10 @@ export class MemStorage implements IStorage {
     this.saveToFile();
   }
 
-  // Stub implementations for user/token methods (MemStorage doesn't support users)
+  // Stub implementations for user methods (MemStorage doesn't support users)
   async createUser(): Promise<User> { throw new Error("MemStorage does not support users"); }
   async getUserByUsername(): Promise<User | undefined> { return undefined; }
   async getUserById(): Promise<User | undefined> { return undefined; }
-  async updateUserTokenBalance(): Promise<void> { throw new Error("MemStorage does not support users"); }
-  async createTokenUsage(): Promise<TokenUsage> { throw new Error("MemStorage does not support tokens"); }
-  async getDailyUsage(): Promise<DailyUsage | undefined> { return undefined; }
-  async createOrUpdateDailyUsage(): Promise<void> { throw new Error("MemStorage does not support daily usage"); }
-  async getUserTokenBalance(): Promise<number> { return 0; }
   
   // Anonymous to authenticated user migration (not supported in MemStorage)
   async migrateAnonymousAssignments(): Promise<Assignment[]> { 
@@ -903,39 +683,6 @@ export class MemStorage implements IStorage {
   async updateRewriteJob(): Promise<void> { throw new Error("MemStorage does not support rewrite jobs"); }
   async getRewriteJobs(): Promise<RewriteJob[]> { return []; }
   
-  // Stripe payment methods (not implemented for MemStorage)
-  async createStripePayment(payment: InsertStripePayment): Promise<StripePayment> {
-    throw new Error("Stripe payments not supported in MemStorage");
-  }
-
-  async getStripePaymentBySessionId(sessionId: string): Promise<StripePayment | undefined> {
-    return undefined;
-  }
-
-  async updateStripePaymentStatus(sessionId: string, status: string): Promise<void> {
-    // No-op for MemStorage
-  }
-  
-  async completeStripePaymentAndCredit(sessionId: string, userId: number, tokens: number): Promise<{ alreadyCompleted: boolean; newBalance?: number }> {
-    throw new Error("Stripe payments not supported in MemStorage");
-  }
-  
-  async createStripeEvent(event: InsertStripeEvent): Promise<StripeEvent> {
-    throw new Error("Stripe events not supported in MemStorage");
-  }
-  
-  async getAllStripePayments(): Promise<StripePayment[]> {
-    return [];
-  }
-  
-  async updateStripePaymentMetadata(sessionId: string, metadata: any): Promise<void> {
-    // No-op for MemStorage
-  }
-  
-  async isEventProcessed(eventId: string): Promise<boolean> {
-    return false;
-  }
-
   // Grade methods (not supported in MemStorage)
   async createGrade(): Promise<Grade> { throw new Error("MemStorage does not support grades"); }
   async getGradesByAssignment(): Promise<Grade[]> { return []; }

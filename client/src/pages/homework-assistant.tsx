@@ -16,8 +16,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Send, Copy, Trash2, CheckCircle, History, Lightbulb, Download, Edit3, Save, X, ArrowDown, FileText, Mail, Printer, RotateCcw, Zap, Star } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { TokenStatus } from "@/components/ui/token-status";
-import { PaymentDialog } from "@/components/ui/payment-dialog";
 
 import { UserButton } from "@clerk/clerk-react";
 import { clerkEnabled } from "@/lib/clerk";
@@ -65,7 +63,6 @@ export default function HomeworkAssistant() {
   const [refinementFeedback, setRefinementFeedback] = useState("");
   const [isRefining, setIsRefining] = useState(false);
   const [isMathViewEnabled, setIsMathViewEnabled] = useState(true);
-  const [showPaymentDialog, setShowPaymentDialog] = useState(false);
 
   const [solutionAiScore, setSolutionAiScore] = useState<number | null>(null);
   const [isAnalyzingSolution, setIsAnalyzingSolution] = useState(false);
@@ -977,21 +974,11 @@ ${fullResponse.slice(-1000)}...`;
     },
     onError: (error: any) => {
       const errorMessage = error.message || "Failed to process assignment";
-      
-      // Check if it's a token-related error
-      if (errorMessage.includes("insufficient tokens") || errorMessage.includes("token")) {
-        toast({
-          title: "Insufficient tokens",
-          description: "Please purchase more tokens to continue or register for an account",
-          variant: "destructive",
-        });
-      } else {
-        toast({
-          title: "Processing failed",
-          description: errorMessage,
-          variant: "destructive",
-        });
-      }
+      toast({
+        title: "Processing failed",
+        description: errorMessage,
+        variant: "destructive",
+      });
     },
   });
 
@@ -1033,21 +1020,11 @@ ${fullResponse.slice(-1000)}...`;
     },
     onError: (error: any) => {
       const errorMessage = error.message || "Failed to process assignment";
-      
-      // Check if it's a token-related error
-      if (errorMessage.includes("insufficient tokens") || errorMessage.includes("token")) {
-        toast({
-          title: "Insufficient tokens",
-          description: "Please purchase more tokens to continue or register for an account",
-          variant: "destructive",
-        });
-      } else {
-        toast({
-          title: "Processing failed",
-          description: errorMessage,
-          variant: "destructive",
-        });
-      }
+      toast({
+        title: "Processing failed",
+        description: errorMessage,
+        variant: "destructive",
+      });
     },
   });
 
@@ -1671,10 +1648,6 @@ ${fullResponse.slice(-1000)}...`;
                   <h1 className="text-2xl font-bold text-slate-900">EZHW</h1>
                   <p className="text-sm text-slate-600 mt-1">AI-powered assignment solver</p>
                 </div>
-              </div>
-              {/* Token Status - Full width on its own line */}
-              <div className="flex-1 max-w-md ml-8">
-                <TokenStatus sessionId={sessionId} />
               </div>
             </div>
             
@@ -2407,82 +2380,8 @@ ${fullResponse.slice(-1000)}...`;
                     )}
                     
                     <div className="relative">
-                      {/* FREEMIUM PREVIEW MODE */}
-                      {currentResult.isPreview ? (
-                        <div className="space-y-6">
-                          {/* Preview Content */}
-                          <div className="p-6 bg-gradient-to-br from-yellow-50 to-orange-50 border-2 border-yellow-300 rounded-xl">
-                            <div className="mb-4 text-sm font-semibold text-yellow-800 uppercase tracking-wide flex items-center justify-between">
-                              <span>👀 FREE PREVIEW - Get a taste of our AI solution</span>
-                              {solutionAiScore !== null && (
-                                <Badge variant="outline" className={getAIScoreColor(solutionAiScore)}>
-                                  {getAIScoreText(solutionAiScore)}
-                                </Badge>
-                              )}
-                            </div>
-                            {isMathViewEnabled ? (
-                              <MathRenderer 
-                                content={currentResult.llmResponse}
-                                className="space-y-4 math-content leading-relaxed"
-                              />
-                            ) : (
-                              <pre className="whitespace-pre-wrap text-sm font-mono text-slate-800 leading-relaxed bg-white p-4 rounded-lg border border-yellow-200 overflow-x-auto">
-                                {currentResult.llmResponse}
-                              </pre>
-                            )}
-                          </div>
-                          
-                          {/* PAYPAL UPGRADE PROMPT */}
-                          <div className="p-8 bg-gradient-to-br from-green-50 to-emerald-50 border-3 border-green-300 rounded-2xl shadow-lg">
-                            <div className="text-center space-y-6">
-                              <div className="text-3xl font-bold text-green-800">
-                                🔓 Unlock Complete Solution
-                              </div>
-                              <div className="text-lg text-green-700 max-w-2xl mx-auto">
-                                Want to see the <strong>full step-by-step solution</strong> with detailed explanations, graphs, and complete mathematical work? 
-                              </div>
-                              
-                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 my-6">
-                                <div className="bg-white p-4 rounded-lg border border-green-200">
-                                  <div className="text-2xl mb-2">📚</div>
-                                  <div className="font-semibold text-green-800">Complete Solutions</div>
-                                  <div className="text-sm text-green-600">Full step-by-step explanations</div>
-                                </div>
-                                <div className="bg-white p-4 rounded-lg border border-green-200">
-                                  <div className="text-2xl mb-2">📊</div>
-                                  <div className="font-semibold text-green-800">Graphs & Charts</div>
-                                  <div className="text-sm text-green-600">Auto-generated visualizations</div>
-                                </div>
-                                <div className="bg-white p-4 rounded-lg border border-green-200">
-                                  <div className="text-2xl mb-2">💾</div>
-                                  <div className="font-semibold text-green-800">PDF Export</div>
-                                  <div className="text-sm text-green-600">Save & print your solutions</div>
-                                </div>
-                              </div>
-                              
-                              <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
-                                <Button
-                                  onClick={() => setShowPaymentDialog(true)}
-                                  className="px-8 py-4 text-xl font-bold bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl shadow-lg hover:shadow-xl hover:from-green-700 hover:to-emerald-700 transition-all duration-200"
-                                >
-                                  💳 Buy Credits (PayPal or Stripe)
-                                </Button>
-                                
-                                <div className="text-sm text-green-600 text-center">
-                                  <div className="font-semibold">Starting at just $5</div>
-                                  <div>Secure payment via PayPal or Stripe</div>
-                                </div>
-                              </div>
-                              
-                              <div className="text-sm text-green-600 border-t border-green-200 pt-4">
-                                ✨ <strong>Already have credits?</strong> You need more credits to unlock this solution
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      ) : (
-                        /* FULL SOLUTION MODE - For paid users */
-                        <>
+                      {/* FULL SOLUTION MODE */}
+                      <>
                           {isMathViewEnabled ? (
                             <div className="p-6 bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-xl">
                               <div className="mb-3 text-sm font-semibold text-blue-700 uppercase tracking-wide flex items-center justify-between">
@@ -2513,8 +2412,7 @@ ${fullResponse.slice(-1000)}...`;
                               </pre>
                             </div>
                           )}
-                        </>
-                      )}
+                      </>
                     </div>
                   </div>
                   
@@ -3408,14 +3306,6 @@ Use Enter to send your message, or Shift+Enter for new lines."
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* Payment Dialog */}
-      <PaymentDialog
-        open={showPaymentDialog}
-        onClose={() => setShowPaymentDialog(false)}
-        user={user}
-      />
-
 
       {/* TEST STRICT OUTLINE GENERATOR - Debug Tool */}
       <StrictOutlineTester />

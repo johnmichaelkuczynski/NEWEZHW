@@ -54,8 +54,6 @@ export function registerAdminRoutes(app: Express) {
       { label: "AssemblyAI (Voice)", env: "ASSEMBLYAI_API_KEY", required: true },
       { label: "Venice AI", env: "VENICE_API_KEY", required: false },
       { label: "GPTZero (AI Detection)", env: "GPTZERO_API_KEY", required: false },
-      { label: "Stripe Secret", env: "STRIPE_SECRET_KEY", required: false },
-      { label: "PayPal Client ID", env: "PAYPAL_CLIENT_ID", required: false },
       { label: "Session Secret", env: "SESSION_SECRET", required: true },
     ];
     for (const k of apiKeys) {

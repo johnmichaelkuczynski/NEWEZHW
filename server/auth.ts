@@ -13,11 +13,9 @@ export class AuthService {
     // Hash password
     const hashedPassword = await bcrypt.hash(data.password, 10);
 
-    // Create user with unlimited tokens for testing
     const user = await storage.createUser({
       username: data.username,
       password: hashedPassword,
-      tokenBalance: 99999999  // TESTING MODE: All users get unlimited credits
     });
 
     return user;
@@ -36,7 +34,6 @@ export class AuthService {
       user = await storage.createUser({
         username: data.username.toLowerCase(),
         password: 'special_user_no_password_needed',
-        tokenBalance: 99999999999  // Unlimited for special users
       });
     }
     

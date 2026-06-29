@@ -8,7 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useSession } from "@/hooks/use-session";
-import { Loader2, Mail, Lock, User, CreditCard, Eye, EyeOff } from "lucide-react";
+import { Loader2, Mail, Lock, User, Eye, EyeOff } from "lucide-react";
 
 interface AuthDialogProps {
   open: boolean;
@@ -39,7 +39,7 @@ export function AuthDialog({ open, onClose, onSuccess }: AuthDialogProps) {
     onSuccess: (user) => {
       toast({
         title: "Login successful",
-        description: `Welcome back! You have ${user.user.tokenBalance.toLocaleString()} tokens.`,
+        description: `Welcome back, ${user.user.username}!`,
       });
       // Force refetch with delay to ensure session cookie is set
       setTimeout(() => {
@@ -67,7 +67,7 @@ export function AuthDialog({ open, onClose, onSuccess }: AuthDialogProps) {
     onSuccess: (user) => {
       toast({
         title: "Registration successful",
-        description: "Welcome! You can now purchase tokens to unlock full features.",
+        description: "Welcome! Your account has been created.",
       });
       // Force refetch with delay to ensure session cookie is set
       setTimeout(() => {
@@ -165,7 +165,7 @@ export function AuthDialog({ open, onClose, onSuccess }: AuthDialogProps) {
           
           <TabsContent value="login" className="space-y-4">
             <div className="text-sm text-muted-foreground">
-              Login to access your token balance and purchase more credits
+              Login to access your account
             </div>
             <form onSubmit={handleLogin} className="space-y-4">
               <div className="space-y-2">
@@ -230,7 +230,7 @@ export function AuthDialog({ open, onClose, onSuccess }: AuthDialogProps) {
           
           <TabsContent value="register" className="space-y-4">
             <div className="text-sm text-muted-foreground">
-              Create an account to purchase tokens and unlock unlimited homework assistance
+              Create an account to save your homework assignments
             </div>
             <form onSubmit={handleRegister} className="space-y-4">
               <div className="space-y-2">
@@ -305,19 +305,6 @@ export function AuthDialog({ open, onClose, onSuccess }: AuthDialogProps) {
             </form>
           </TabsContent>
         </Tabs>
-        
-        <div className="mt-6 p-4 bg-muted/50 rounded-lg">
-          <div className="flex items-center gap-2 text-sm font-medium mb-2">
-            <CreditCard className="h-4 w-4" />
-            Token Pricing
-          </div>
-          <div className="text-xs text-muted-foreground space-y-1">
-            <div>$1 → 2,000 tokens</div>
-            <div>$10 → 30,000 tokens</div>
-            <div>$100 → 600,000 tokens</div>
-            <div>$1,000 → 10,000,000 tokens</div>
-          </div>
-        </div>
       </DialogContent>
     </Dialog>
   );

@@ -122,7 +122,6 @@ export const processAssignmentResponseSchema = z.object({
   graphImages: z.array(z.string()).optional(),
   processingTime: z.number(),
   success: z.boolean(),
-  isPreview: z.boolean().optional(), // Flag for freemium preview mode
 });
 
 export type ProcessAssignmentResponse = z.infer<typeof processAssignmentResponseSchema>;
@@ -165,7 +164,6 @@ export const loginSchema = z.object({
 export const userResponseSchema = z.object({
   id: z.number(),
   username: z.string(),
-  tokenBalance: z.number(),
 });
 
 export type RegisterRequest = z.infer<typeof registerSchema>;
@@ -237,94 +235,14 @@ export const rewriteResponseSchema = z.object({
 export type RewriteRequest = z.infer<typeof rewriteRequestSchema>;
 export type RewriteResponse = z.infer<typeof rewriteResponseSchema>;
 
-// Stripe payments table
-export const stripePayments = pgTable("stripe_payments", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }),
-  stripeSessionId: text("stripe_session_id").notNull().unique(),
-  stripePaymentIntentId: text("stripe_payment_intent_id"),
-  amount: integer("amount").notNull(),
-  tokens: integer("tokens").notNull(),
-  status: text("status").notNull().default("pending"),
-  metadata: jsonb("metadata"),
-  createdAt: timestamp("created_at").default(sql`now()`),
-  updatedAt: timestamp("updated_at").default(sql`now()`),
-  completedAt: timestamp("completed_at"),
-});
-
-// Stripe events table for idempotency tracking
-export const stripeEvents = pgTable("stripe_events", {
-  eventId: text("event_id").primaryKey(), // Stripe event ID
-  eventType: text("event_type").notNull(),
-  processed: boolean("processed").notNull().default(false),
-  sessionId: text("session_id"), // Optional reference to session
-  paymentIntentId: text("payment_intent_id"), // Optional reference to payment intent
-  createdAt: timestamp("created_at").default(sql`now()`),
-});
-
-export const insertStripePaymentSchema = createInsertSchema(stripePayments).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-});
-
-export const insertStripeEventSchema = createInsertSchema(stripeEvents).omit({
-  createdAt: true,
-});
-
-export type StripePayment = typeof stripePayments.$inferSelect;
-export type InsertStripePayment = z.infer<typeof insertStripePaymentSchema>;
-export type StripeEvent = typeof stripeEvents.$inferSelect;
-export type InsertStripeEvent = z.infer<typeof insertStripeEventSchema>;
-
-// Payment schemas
-export const purchaseCreditsSchema = z.object({
-  amount: z.enum(['1', '10', '100', '1000']),
-});
-
-export type PurchaseCreditsRequest = z.infer<typeof purchaseCreditsSchema>;
-
-// Token usage tracking
-export const tokenCheckSchema = z.object({
-  inputText: z.string(),
-  sessionId: z.string().optional(),
-});
-
-export const tokenUsageResponseSchema = z.object({
-  canProcess: z.boolean(),
-  inputTokens: z.number(),
-  estimatedOutputTokens: z.number(),
-  remainingBalance: z.number().optional(),
-  dailyUsage: z.number().optional(),
-  dailyLimit: z.number().optional(),
-  message: z.string().optional(),
-});
-
-export type TokenCheckRequest = z.infer<typeof tokenCheckSchema>;
-export type TokenUsageResponse = z.infer<typeof tokenUsageResponseSchema>;
-
 // Insert schemas for new tables
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
   createdAt: true,
 });
 
-export const insertTokenUsageSchema = createInsertSchema(tokenUsage).omit({
-  id: true,
-  createdAt: true,
-});
-
-export const insertDailyUsageSchema = createInsertSchema(dailyUsage).omit({
-  id: true,
-  createdAt: true,
-});
-
 export type InsertUser = z.infer<typeof insertUserSchema>;
-export type InsertTokenUsage = z.infer<typeof insertTokenUsageSchema>;
-export type InsertDailyUsage = z.infer<typeof insertDailyUsageSchema>;
 export type User = typeof users.$inferSelect;
-export type TokenUsage = typeof tokenUsage.$inferSelect;
-export type DailyUsage = typeof dailyUsage.$inferSelect;
 
 // GPT BYPASS interfaces
 export interface TextChunk {
