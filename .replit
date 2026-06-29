@@ -8,7 +8,7 @@ packages = ["imagemagick", "graphicsmagick", "tectonic", "chromium", "util-linux
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["node", "./dist/index.cjs"]
+run = ["node", "dist/index.js"]
 build = ["npm", "run", "build"]
 
 [[ports]]
@@ -18,6 +18,10 @@ externalPort = 3000
 [[ports]]
 localPort = 5000
 externalPort = 80
+
+[[ports]]
+localPort = 5050
+externalPort = 3001
 
 [workflows]
 runButton = "Project"
