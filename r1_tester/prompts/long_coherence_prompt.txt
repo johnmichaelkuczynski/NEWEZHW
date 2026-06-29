@@ -1,0 +1,50 @@
+COMPREHENSIVE MULTI-PART PHILOSOPHY AND ETHICS EXAMINATION
+
+This assignment covers four distinct topic areas. You must address EVERY part fully and thoroughly. Total expected length: 1800–2200 words. Do not skip any section.
+
+PART ONE: KANT'S DEONTOLOGICAL ETHICS (400–500 words)
+
+Explain Immanuel Kant's deontological ethical theory in detail. Your response must address all of the following:
+
+1. The concept of the categorical imperative in its three main formulations: (a) the Formula of Universal Law, (b) the Formula of Humanity, and (c) the Formula of the Kingdom of Ends.
+2. The distinction Kant draws between hypothetical imperatives and categorical imperatives, and why only the latter can ground genuine moral obligation.
+3. The concept of the "good will" and why Kant considers it the only thing good without qualification.
+4. At least two concrete ethical examples that illustrate how the categorical imperative applies in practice (e.g., lying, promise-keeping, suicide).
+5. The concept of moral autonomy and how it distinguishes rational agents from mere things.
+
+PART TWO: UTILITARIAN ETHICS AND ITS TENSIONS WITH KANTIANISM (400–500 words)
+
+Explain utilitarianism in its classical Benthamite and Millian forms. Then analyze the fundamental conflicts between utilitarian and Kantian ethics. Your response must address:
+
+1. The principle of utility (greatest happiness principle) and how it functions as a decision procedure.
+2. The distinction between act-utilitarianism and rule-utilitarianism, with an example of a case where they diverge.
+3. Mill's qualitative distinction between higher and lower pleasures and whether this modification weakens or strengthens classical utilitarianism.
+4. A specific moral dilemma (e.g., the trolley problem, torture of one to save many) where Kantian and utilitarian verdicts conflict, with a rigorous analysis of both sides.
+5. Which framework you find more defensible, with three explicit reasons, while acknowledging the strongest objection to your position.
+
+PART THREE: APPLIED ETHICS — ARTIFICIAL INTELLIGENCE AND MORAL STATUS (400–500 words)
+
+Examine the ethical implications of advanced artificial intelligence systems. Apply both Kantian and utilitarian frameworks from Parts One and Two. Address:
+
+1. Whether a sufficiently advanced AI system could possess moral status, and what criteria (sentience, rationality, autonomy) would be required under each ethical framework.
+2. The ethical obligations of AI developers and corporations under the categorical imperative — specifically, what universal maxims should govern AI deployment.
+3. The utilitarian calculus of AI risk: how to weigh the aggregate benefits of AI automation (efficiency, medical advances, scientific discovery) against risks of job displacement, surveillance, and existential risk.
+4. The concept of "epistemic autonomy" — whether AI-generated content undermines human rational agency — and how Kant's Formula of Humanity applies to systems that influence belief formation at scale.
+5. A concrete policy recommendation (minimum 2 sentences) grounded in your ethical analysis.
+
+PART FOUR: METAETHICS — THE GROUNDING OF MORAL FACTS (400–500 words)
+
+Step back from first-order ethical questions and examine the metaethical foundations of the theories discussed above. Address:
+
+1. The distinction between moral realism, anti-realism, and constructivism. Which metaethical position does Kantian ethics most naturally align with, and why?
+2. The is-ought problem (Hume's guillotine): how utilitarians and Kantians each attempt to derive prescriptive moral claims from descriptive facts about the world, and whether either attempt succeeds.
+3. The relationship between moral epistemology and the two first-order theories: how do we come to know moral truths under each framework?
+4. The challenge of moral relativism: if moral facts are mind-dependent or culturally constructed, what follows for the universal pretensions of both Kantian and utilitarian ethics?
+5. Your own metaethical verdict: which framework has the more defensible metaethical foundation, with explicit argumentation.
+
+SPECIAL INSTRUCTIONS:
+- Use technical philosophical vocabulary throughout (deontology, teleology, supererogation, prima facie duty, etc.)
+- Each part must have a clearly labeled header (PART ONE:, PART TWO:, etc.)
+- No bullet points in the body — use continuous prose paragraphs
+- Minimum 4 paragraphs per part
+- Cite at least one specific text by each of: Kant, Mill, and one contemporary philosopher per relevant part

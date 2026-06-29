@@ -1,0 +1,1 @@
+- [Tractatus tiered memory](tractatus-memory.md) — CC long-doc coherence engine; tier node-id allocation must use max-suffix+1, never keys.length.

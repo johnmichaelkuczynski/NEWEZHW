@@ -1,0 +1,14 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "BI3oK7R79J37ebukskwKG"
+uri = "file://README.md"
+type = "text"
+title = "EZHW README.md"
+
+[[outputs]]
+id = "Nz-fB5MMiRXnvVlbCkKV8"
+uri = "file://EZHW_COMPLETE_APP_BLUEPRINT.md"
+type = "text"
+title = "EZHW Complete App Blueprint"
