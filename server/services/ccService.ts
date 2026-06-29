@@ -12,13 +12,6 @@
 import { pool } from '../db';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
-import {
-  ANTI_SYCOPHANCY_CLAUSES,
-  ensureTractatusTables,
-  skeletonToTier0,
-  updateLiveTier,
-  buildTieredPromptContext,
-} from './tractatusMemory';
 
 // ============================================================================
 // CONSTANTS
@@ -403,8 +396,7 @@ async function processOneChunk(
   job: any,
   skeleton: any,
   provider: string,
-  isGenMode: boolean,
-  memoryContext: string = ''
+  isGenMode: boolean
 ): Promise<{ outputText: string; actualWords: number; delta: any }> {
 
   const skeletonBlock = [
@@ -415,21 +407,12 @@ async function processOneChunk(
     `Entities: ${(skeleton.entities ?? []).join(', ')}`,
   ].join('\n');
 
-  // Tiered Tractatus memory replaces any ad-hoc "prior chunk summary": it carries
-  // forward what earlier sections actually committed to, so this section builds
-  // forward instead of repeating or drifting.
-  const memoryBlock = memoryContext
-    ? `\n${memoryContext}\n═══════════════════════════════════════════════\n`
-    : '';
-
   const systemPrompt = `You are processing one section of a larger document.
-You MUST honor the global skeleton AND the accumulated memory at all times.
+You MUST honor the global skeleton at all times.
 
 ═══ GLOBAL SKELETON (mandatory constraints) ═══
 ${skeletonBlock}
 ═══════════════════════════════════════════════
-${memoryBlock}
-${ANTI_SYCOPHANCY_CLAUSES}
 
 User task: ${job.prompt.substring(0, 800)}
 
@@ -480,7 +463,7 @@ ${chunk.chunk_input_text}`;
   if (actualWords < chunk.min_words * 0.8) {
     console.log(`[CC] Chunk ${chunk.chunk_index + 1}: ${actualWords} words < min ${chunk.min_words}. Expanding...`);
     await sleep(3000);
-    const retrySystem = `You are expanding a document section. Task: ${job.prompt.substring(0, 400)}\n\n${ANTI_SYCOPHANCY_CLAUSES}`;
+    const retrySystem = `You are expanding a document section. Task: ${job.prompt.substring(0, 400)}`;
     const retryPrompt = `Your previous output was ${actualWords} words. Target: ${chunk.min_words}–${chunk.max_words} words.
 
 PREVIOUS OUTPUT:
@@ -501,7 +484,7 @@ All additions must be substantive. Write the expanded version now (${chunk.targe
   if (actualWords > chunk.max_words * 1.2) {
     console.log(`[CC] Chunk ${chunk.chunk_index + 1}: ${actualWords} words > max ${chunk.max_words}. Compressing...`);
     await sleep(3000);
-    const retrySystem = `You are compressing a document section without losing substance.\n\n${ANTI_SYCOPHANCY_CLAUSES}`;
+    const retrySystem = `You are compressing a document section without losing substance.`;
     const retryPrompt = `Your previous output was ${actualWords} words. Target: ${chunk.min_words}–${chunk.max_words} words.
 
 PREVIOUS OUTPUT:
@@ -581,8 +564,6 @@ async function executeRepair(
 ): Promise<string> {
   const systemPrompt = `You are performing a targeted micro-repair on a document chunk.
 Apply ONLY the specified repair. Preserve all other content exactly.
-
-${ANTI_SYCOPHANCY_CLAUSES}
 
 REPAIR INSTRUCTION: ${repairAction}
 Skeleton thesis: ${skeleton.thesis ?? ''}
@@ -685,11 +666,6 @@ export async function* runCCPipeline(
 
     const skeleton = await extractSkeleton(jobId, prompt, inputText, provider);
 
-    // Seed Tier 0 of the Tractatus tree from the skeleton (immutable constraints).
-    const callLLM = (s: string, u: string, m: number) => callProvider(s, u, provider, m);
-    await ensureTractatusTables();
-    await skeletonToTier0(jobId, skeleton);
-
     yield {
       type: 'skeleton',
       data: { skeleton, numChunks, targetWords: targetMid, lengthMode },
@@ -720,11 +696,7 @@ export async function* runCCPipeline(
       await dbUpdateChunk(cr.id, { status: 'processing' });
 
       try {
-        // Inject the accumulated tiered memory (skeleton + what prior chunks
-        // committed to). This is what keeps chunks coherent across the document.
-        const memoryContext = await buildTieredPromptContext(jobId);
-
-        const { outputText, actualWords, delta } = await processOneChunk(cr, job, skeleton, provider, isGenMode, memoryContext);
+        const { outputText, actualWords, delta } = await processOneChunk(cr, job, skeleton, provider, isGenMode);
 
         await dbUpdateChunk(cr.id, {
           chunkOutputText: outputText,
@@ -733,16 +705,6 @@ export async function* runCCPipeline(
           status:          'complete',
         });
         await dbUpdateJob(jobId, { currentChunk: i + 1 });
-
-        // Grow the live tier from this chunk's delta (may trigger compression).
-        try {
-          const { nodeCount, compressed } = await updateLiveTier(jobId, delta, callLLM);
-          if (compressed) {
-            yield { type: 'status', data: `Memory tier compressed (live tier reached ${nodeCount} nodes)` };
-          }
-        } catch (memErr: any) {
-          console.error(`[CC] Tractatus update failed for chunk ${i + 1}: ${memErr.message}`);
-        }
 
         console.log(`[CC] Chunk ${i + 1}/${actualN}: ${actualWords}/${cr.target_words} words`);
 

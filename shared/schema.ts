@@ -3,11 +3,32 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
 
-// Users table for authentication (with proper user isolation)
+// Users table for authentication and token tracking (with proper user isolation)
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   username: varchar("username", { length: 255 }).unique().notNull(),
   password: text("password").notNull(),
+  tokenBalance: integer("token_balance").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Token usage tracking
+export const tokenUsage = pgTable("token_usage", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => users.id),
+  sessionId: text("session_id"), // for anonymous users
+  inputTokens: integer("input_tokens").notNull(),
+  outputTokens: integer("output_tokens").notNull(),
+  remainingBalance: integer("remaining_balance"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Daily usage tracking for free users
+export const dailyUsage = pgTable("daily_usage", {
+  id: serial("id").primaryKey(),
+  sessionId: text("session_id").notNull(),
+  date: text("date").notNull(), // YYYY-MM-DD format
+  totalTokens: integer("total_tokens").default(0),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

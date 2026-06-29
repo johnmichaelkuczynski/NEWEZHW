@@ -1,11 +1,10 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { createRequire } from "module";
 import multer from "multer";
 import session from "express-session";
 import ConnectPgSimple from "connect-pg-simple";
 import { storage } from "./storage";
-import { processAssignmentSchema, emailSolutionSchema, registerSchema, loginSchema, type ProcessAssignmentRequest, type ProcessAssignmentResponse, type EmailSolutionRequest, type AssignmentListItem } from "@shared/schema";
+import { processAssignmentSchema, emailSolutionSchema, registerSchema, loginSchema, purchaseCreditsSchema, tokenCheckSchema, type ProcessAssignmentRequest, type ProcessAssignmentResponse, type EmailSolutionRequest, type AssignmentListItem } from "@shared/schema";
 import { ZodError } from "zod";
 import Tesseract from "tesseract.js";
 import pdf2json from "pdf2json";
@@ -15,10 +14,12 @@ import fs from 'fs';
 import path from 'path';
 import puppeteer from 'puppeteer';
 import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
-const { PDFDocument } = createRequire(import.meta.url)('pdf-lib/dist/pdf-lib.js');
+import { PDFDocument } from 'pdf-lib';
 import { authService } from './auth';
 import { clerkMiddleware, getAuth, clerkClient } from '@clerk/express';
-import { countTokens, truncateResponse, generateSessionId, getTodayDate } from './tokenUtils';
+import { countTokens, estimateOutputTokens, truncateResponse, TOKEN_LIMITS, generateSessionId, getTodayDate } from './tokenUtils';
+import Stripe from 'stripe';
+import { createPaypalOrder, capturePaypalOrder, loadPaypalDefault } from "./paypal";
 import './types';
 
 // GPT BYPASS service imports
@@ -67,6 +68,15 @@ const venice = new OpenAI({
   baseURL: "https://api.venice.ai/api/v1"
 });
 
+// Initialize Stripe
+// Validate Stripe secret key at startup
+if (!process.env.STRIPE_SECRET_KEY) {
+  throw new Error('STRIPE_SECRET_KEY environment variable is required');
+}
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+  apiVersion: '2024-06-20'
+});
 
 // DeepSeek processing function
 function detectContentType(text: string): 'math' | 'document' | 'general' {
@@ -120,6 +130,12 @@ function detectContentType(text: string): 'math' | 'document' | 'general' {
   if (docScore > mathScore && docScore > 0) return 'document';
   if (mathScore > 0) return 'math';
   return 'general';
+}
+
+// Generate preview for freemium model - DISABLED - ALWAYS RETURN FULL RESPONSE
+function generatePreview(fullResponse: string): string {
+  // PAYWALL DISABLED - RETURN FULL CONTENT ALWAYS, NO PREVIEW TRUNCATION
+  return fullResponse;
 }
 
 // Extract word count requirement from text
@@ -2463,6 +2479,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               user = await storage.createUser({
                 username,
                 password: 'clerk_oauth_no_password_needed',
+                tokenBalance: 99999999 // TESTING MODE: all users get unlimited credits
               });
               console.log(`[CLERK-SYNC] Created DB user for Clerk account: ${username}`);
             }
@@ -2490,8 +2507,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             jmkUser = await storage.createUser({
               username: 'JMK',
               password: 'auto_login_no_password_needed',
+              tokenBalance: 99999999
             });
-            console.log('[AUTO-LOGIN] Created JMK user');
+            console.log('[AUTO-LOGIN] Created JMK user with unlimited tokens');
           }
           req.session.userId = jmkUser.id;
         } catch (err) {
@@ -2717,6 +2735,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.end();
   });
 
+  // Production diagnostics route (no secrets leaked)
+  app.get("/__diag/payments", async (req, res) => {
+    if (!stripe) {
+      return res.status(503).json({ error: "Stripe not configured" });
+    }
+    try {
+      const liveKey = (process.env.STRIPE_SECRET_KEY || "").startsWith("sk_live_");
+      const whSet   = !!process.env.STRIPE_WEBHOOK_SECRET;
+      const priceId = process.env.PRICE_ID_30K || process.env.PRICE_ID || "";
+      let priceInfo = null;
+      if (priceId) {
+        priceInfo = await stripe.prices.retrieve(priceId);
+      }
+      res.json({
+        liveKey, 
+        webhookSecretSet: whSet,
+        priceConfigured: !!priceId,
+        priceActive: !!(priceInfo && priceInfo.active),
+        priceLiveMode: !!(priceInfo && priceInfo.livemode)
+      });
+    } catch (e) {
+      res.status(500).json({ diagError: e.message || String(e) });
+    }
+  });
+
   // Auth routes
   app.post('/api/register', async (req, res) => {
     try {
@@ -2730,6 +2773,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           user = await storage.createUser({
             username: 'jmkuczynski',
             password: 'dummy', // Password doesn't matter for this user
+            tokenBalance: 99999999 // Unlimited tokens
           });
         }
         
@@ -2746,6 +2790,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           user: {
             id: user.id,
             username: user.username,
+            tokenBalance: 99999999
           }
         });
         return;
@@ -2766,6 +2811,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         user: {
           id: user.id,
           username: user.username,
+          tokenBalance: user.tokenBalance || 0
         }
       });
     } catch (error) {
@@ -2802,7 +2848,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           user = await storage.createUser({
             username: loginData.username,
             password: hashedPassword,
+            tokenBalance: 99999999 // Unlimited tokens
           });
+        } else {
+          // Ensure unlimited tokens
+          await storage.updateUserTokenBalance(user.id, 99999999);
+          user.tokenBalance = 99999999;
         }
         
         // Store user in session
@@ -2818,6 +2869,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           user: {
             id: user.id,
             username: user.username,
+            tokenBalance: 99999999
           }
         });
         return;
@@ -2843,6 +2895,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         user: {
           id: user.id,
           username: user.username,
+          tokenBalance: user.tokenBalance
         }
       });
     } catch (error) {
@@ -2875,13 +2928,279 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: 'User not found' });
       }
       
+      // TESTING MODE: all users have unlimited tokens
       res.json({
         id: user.id,
         username: user.username,
+        tokenBalance: 99999999
       });
     } catch (error) {
       console.error('Get user error:', error);
       res.status(500).json({ error: 'Failed to get user' });
+    }
+  });
+
+  // Token check endpoint
+  app.post('/api/check-tokens', async (req, res) => {
+    try {
+      const { inputText, sessionId } = tokenCheckSchema.parse(req.body);
+      
+      const inputTokens = countTokens(inputText);
+      const estimatedOutputTokens = estimateOutputTokens(inputText);
+      const totalTokens = inputTokens + estimatedOutputTokens;
+      
+      // Check if user is authenticated
+      if (req.session.userId) {
+        const user = await authService.getUserById(req.session.userId);
+        if (!user) {
+          return res.status(404).json({ error: 'User not found' });
+        }
+        
+        // SPECIAL CASE: jmkuczynski and randyjohnson have unlimited access
+        if (user.username === 'jmkuczynski' || user.username === 'randyjohnson') {
+          res.json({
+            canProcess: true,
+            inputTokens,
+            estimatedOutputTokens,
+            remainingBalance: 99999999,
+            message: undefined
+          });
+          return;
+        }
+        
+        const canProcess = (user.tokenBalance || 0) >= totalTokens;
+        
+        res.json({
+          canProcess,
+          inputTokens,
+          estimatedOutputTokens,
+          remainingBalance: user.tokenBalance || 0,
+          message: canProcess ? undefined : '🔒 You\'ve used all your credits. [Buy More Credits]'
+        });
+      } else {
+        // Free user logic
+        const today = getTodayDate();
+        const dailyUsage = await storage.getDailyUsage(sessionId || generateSessionId(), today);
+        const currentDailyUsage = dailyUsage?.totalTokens || 0;
+        
+        let canProcess = true;
+        let message: string | undefined;
+        
+        // Check input token limit
+        if (inputTokens > TOKEN_LIMITS.FREE_INPUT_LIMIT) {
+          canProcess = false;
+          message = '🔒 Full results available with upgrade. [Register & Unlock Full Access]';
+        }
+        // Check output token limit
+        else if (estimatedOutputTokens > TOKEN_LIMITS.FREE_OUTPUT_LIMIT) {
+          canProcess = false;
+          message = '🔒 Full results available with upgrade. [Register & Unlock Full Access]';
+        }
+        // Check daily limit
+        else if (currentDailyUsage + totalTokens > TOKEN_LIMITS.FREE_DAILY_LIMIT) {
+          canProcess = false;
+          message = '🔒 You\'ve reached the free usage limit for today. [Register & Unlock Full Access]';
+        }
+        
+        res.json({
+          canProcess,
+          inputTokens,
+          estimatedOutputTokens,
+          dailyUsage: currentDailyUsage,
+          dailyLimit: TOKEN_LIMITS.FREE_DAILY_LIMIT,
+          message
+        });
+      }
+    } catch (error) {
+      console.error('Token check error:', error);
+      res.status(500).json({ error: 'Failed to check tokens' });
+    }
+  });
+
+  // Stripe payment endpoints
+  app.post('/api/create-checkout-session', async (req, res) => {
+    if (!stripe) {
+      return res.status(503).json({ error: "Stripe not configured" });
+    }
+    try {
+      // Production-safe user ID validation - ONLY use session, never trust headers
+      const userId = req.session?.userId;
+      if (!userId) {
+        return res.status(400).json({ error: "NO_USER_ID" });
+      }
+      
+      // Production-safe origin determination 
+      const origin = process.env.PUBLIC_BASE_URL || process.env.BASE_URL || process.env.FRONTEND_URL || `https://${req.headers.host}`;
+      
+      const { amount } = purchaseCreditsSchema.parse(req.body);
+      const tokens = TOKEN_LIMITS.CREDIT_TIERS[amount];
+      
+      // Enhanced error logging for production
+      console.log(`[STRIPE CHECKOUT] Creating session for user ${userId}, tokens: ${tokens}, amount: $${amount}`);
+      
+      const session = await stripe.checkout.sessions.create({
+        mode: "payment",
+        client_reference_id: String(userId),
+        metadata: { 
+          user_id: String(userId), 
+          tokens: String(tokens),
+          amount: String(amount)
+        },
+        line_items: [
+          {
+            price_data: {
+              currency: 'usd',
+              product_data: {
+                name: `${tokens.toLocaleString()} Homework Pro Tokens`,
+                description: 'Credits for AI-powered homework assistance',
+              },
+              unit_amount: parseInt(amount) * 100, // Convert to cents
+            },
+            quantity: 1,
+          },
+        ],
+        success_url: `${origin}/?payment=success&session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${origin}/?payment=cancelled&session_id={CHECKOUT_SESSION_ID}`,
+      });
+      
+      // Create payment record in database with better error handling
+      try {
+        await storage.createStripePayment({
+          userId: parseInt(String(userId)),
+          stripeSessionId: session.id,
+          amount: parseInt(amount),
+          tokens: tokens,
+          status: 'pending',
+          metadata: { 
+            amount: amount,
+            sessionUrl: session.url,
+            origin: origin
+          }
+        });
+        console.log(`[STRIPE CHECKOUT] Created payment record for session ${session.id}`);
+      } catch (dbError) {
+        console.error('[STRIPE CHECKOUT] Database error creating payment record:', dbError);
+        // Continue anyway - webhook can handle crediting if needed
+      }
+      
+      res.json({ 
+        sessionId: session.id,
+        url: session.url 
+      });
+    } catch (error) {
+      console.error('[STRIPE CHECKOUT] Session creation failed:', error);
+      if (error && typeof error === 'object' && 'type' in error) {
+        console.error(`[STRIPE CHECKOUT] Stripe error - type: ${error.type}, code: ${error.code}, message: ${error.message}`);
+      }
+      res.status(500).json({ error: "CREATE_SESSION_FAILED" });
+    }
+  });
+
+  // Payment status checking endpoint
+  app.get('/api/payment-status/:sessionId', async (req, res) => {
+    if (!stripe) {
+      return res.status(503).json({ error: "Stripe not configured" });
+    }
+    try {
+      const { sessionId } = req.params;
+      console.log(`[STRIPE DEBUG] Checking payment status for session: ${sessionId}`);
+      
+      // Retrieve the session from Stripe
+      const session = await stripe.checkout.sessions.retrieve(sessionId);
+      console.log(`[STRIPE DEBUG] Session details:`, {
+        id: session.id,
+        status: session.status,
+        payment_status: session.payment_status,
+        payment_intent: session.payment_intent,
+        mode: session.mode,
+        amount_total: session.amount_total,
+        currency: session.currency,
+        metadata: session.metadata,
+        client_reference_id: session.client_reference_id
+      });
+      
+      if (session.payment_status === 'paid' && session.status === 'complete') {
+        console.log(`[STRIPE DEBUG] Payment successful, crediting tokens for session: ${sessionId}`);
+        
+        // Payment completed - check if tokens already credited
+        const existingPayment = await storage.getStripePaymentBySessionId(sessionId);
+        console.log(`[STRIPE DEBUG] Existing payment record:`, existingPayment);
+        
+        if (existingPayment && existingPayment.status !== 'completed') {
+          // Credit the tokens from our payment record (more reliable than Stripe metadata)
+          const tokens = existingPayment.tokens;
+          const userId = existingPayment.userId;
+          console.log(`[STRIPE DEBUG] Crediting ${tokens} tokens to user ${userId} from payment record`);
+          
+          if (tokens > 0 && userId > 0) {
+            // Update user's token balance
+            const user = await authService.getUserById(userId);
+            if (user) {
+              const newBalance = (user.tokenBalance || 0) + tokens;
+              await storage.updateUserTokenBalance(userId, newBalance);
+              await storage.updateStripePaymentStatus(sessionId, 'completed');
+              console.log(`[STRIPE DEBUG] Updated user ${userId} balance to ${newBalance} tokens`);
+            } else {
+              console.error(`[STRIPE DEBUG] User ${userId} not found when crediting tokens`);
+            }
+          } else {
+            console.error(`[STRIPE DEBUG] Invalid token credit parameters: tokens=${tokens}, userId=${userId}`);
+          }
+        } else {
+          console.log(`[STRIPE DEBUG] Tokens already credited for session: ${sessionId}`);
+        }
+        
+        res.json({ status: 'completed' });
+      } else if (session.status === 'expired') {
+        console.log(`[STRIPE DEBUG] Session expired: ${sessionId}`);
+        res.json({ status: 'failed' });
+      } else if (session.status === 'open' && session.payment_status === 'unpaid') {
+        console.log(`[STRIPE DEBUG] Session still open and unpaid: ${sessionId}`);
+        res.json({ status: 'pending' });
+      } else {
+        console.log(`[STRIPE DEBUG] Session in unexpected state - status: ${session.status}, payment_status: ${session.payment_status}`);
+        // Check if payment failed
+        if (session.payment_status === 'no_payment_required' || session.payment_status === 'unpaid') {
+          console.log(`[STRIPE DEBUG] Payment not completed or failed for session: ${sessionId}`);
+          res.json({ status: 'failed' });
+        } else {
+          res.json({ status: 'pending' });
+        }
+      }
+    } catch (error) {
+      console.error(`[STRIPE DEBUG] Payment status check error for session ${req.params.sessionId}:`, error);
+      // Check if it's a Stripe API error
+      if (error && typeof error === 'object' && 'type' in error) {
+        console.error(`[STRIPE DEBUG] Stripe error type: ${error.type}, code: ${error.code}, message: ${error.message}`);
+      }
+      res.status(500).json({ error: 'Failed to check payment status' });
+    }
+  });
+
+  // PayPal payment endpoints
+  app.get("/api/paypal/setup", async (req, res) => {
+    await loadPaypalDefault(req, res);
+  });
+
+  app.post("/api/paypal/order", async (req, res) => {
+    // Request body should contain: { intent, amount, currency }
+    await createPaypalOrder(req, res);
+  });
+
+  app.post("/api/paypal/order/:orderID/capture", async (req, res) => {
+    try {
+      // Capture the PayPal payment
+      await capturePaypalOrder(req, res);
+      
+      // TODO: Add token balance update logic here after successful capture
+      // This would involve:
+      // 1. Getting order details to determine token amount
+      // 2. Getting user from session 
+      // 3. Adding tokens to user account
+      
+    } catch (error) {
+      console.error('PayPal capture error:', error);
+      res.status(500).json({ error: 'Failed to capture payment' });
     }
   });
 
@@ -3579,16 +3898,33 @@ OUTPUT: Provide ONLY the perfected assignment text. No meta-commentary or explan
       }
       combinedText = await enrichWithPhilosophicalContentIfNeeded(combinedText, forcePhilosopher);
       
-      // Count input tokens for analytics
+      // Count tokens based on combined text (inputText + reference documents + philosophical enrichment)
       const inputTokens = countTokens(combinedText);
+      const estimatedOutputTokens = estimateOutputTokens(combinedText);
+      const totalTokens = inputTokens + estimatedOutputTokens;
       
-      console.log(`[PROCESS] User: ${userId}, Input tokens: ${inputTokens}`);
+      console.log(`[TOKEN DEBUG] User: ${userId}, Input: ${inputTokens}, Estimated Output: ${estimatedOutputTokens}, Total: ${totalTokens}`);
       
+      // Check token limits and process accordingly
       if (userId) {
+        // Registered user - check token balance
         const user = await authService.getUserById(userId);
         if (!user) {
           return res.status(404).json({ error: "User not found" });
         }
+        
+        console.log(`[TOKEN DEBUG] User ${user.username} has ${user.tokenBalance} tokens, needs ${totalTokens}`);
+        
+        // TESTING MODE: Token checks disabled - all users have unlimited access
+        // Keeping the code here for when paywall is re-enabled
+        /*
+        if (user.username !== 'jmkuczynski' && user.username !== 'randyjohnson' && (user.tokenBalance || 0) < totalTokens) {
+          return res.status(402).json({ 
+            error: "🔒 You've used all your credits. [Buy More Credits]",
+            needsUpgrade: true 
+          });
+        }
+        */
         
         // Process with full response
         let llmResult: {response: string, graphData?: GraphRequest[]};
@@ -3616,6 +3952,31 @@ OUTPUT: Provide ONLY the perfected assignment text. No meta-commentary or explan
         }
 
         const actualOutputTokens = countTokens(llmResult.response);
+        const actualTotalTokens = inputTokens + actualOutputTokens;
+        
+        console.log(`[TOKEN DEDUCTION] User ${user.username}: actual input=${inputTokens}, actual output=${actualOutputTokens}, actual total=${actualTotalTokens}`);
+        
+        // TESTING MODE: Token deduction disabled - all users have unlimited access
+        // Log usage for analytics but don't deduct tokens
+        console.log(`[TESTING MODE] NOT deducting ${actualTotalTokens} tokens (paywall disabled)`);
+        
+        // Keeping the deduction code here for when paywall is re-enabled
+        /*
+        if (user.username !== 'jmkuczynski' && user.username !== 'randyjohnson') {
+          console.log(`[TOKEN DEDUCTION] Deducting ${actualTotalTokens} tokens from user ${user.username} (balance: ${user.tokenBalance})`);
+          const newBalance = Math.max(0, (user.tokenBalance || 0) - actualTotalTokens);
+          await storage.updateUserTokenBalance(userId, newBalance);
+          console.log(`[TOKEN DEDUCTION] New balance: ${newBalance} (prevented negative: ${(user.tokenBalance || 0) - actualTotalTokens})`);
+          
+          await storage.createTokenUsage({
+            userId,
+            sessionId: null,
+            inputTokens,
+            outputTokens: actualOutputTokens,
+            remainingBalance: (user.tokenBalance || 0) - actualTotalTokens
+          });
+        }
+        */
         
         const processingTime = Date.now() - startTime;
 
@@ -3701,32 +4062,21 @@ OUTPUT: Provide ONLY the perfected assignment text. No meta-commentary or explan
             throw new Error(`Unsupported LLM provider: ${llmProvider}`);
         }
 
-        const actualOutputTokens = countTokens(llmResult.response);
+        // Generate preview for free users
+        const previewResponse = generatePreview(llmResult.response);
+        const finalOutputTokens = countTokens(previewResponse);
+        const finalTotalTokens = inputTokens + finalOutputTokens;
+        
         const processingTime = Date.now() - startTime;
 
-        // Generate graphs if required
-        let graphImages: string[] | undefined;
-        let graphDataJsons: string[] | undefined;
-
-        if (llmResult.graphData && llmResult.graphData.length > 0) {
-          try {
-            graphImages = [];
-            graphDataJsons = [];
-
-            for (const graphData of llmResult.graphData) {
-              const graphImage = await generateGraph(graphData);
-              graphImages.push(graphImage);
-              graphDataJsons.push(JSON.stringify(graphData));
-            }
-          } catch (error) {
-            console.error('Graph generation error:', error);
-          }
-        }
+        // No graphs for free users - premium feature
+        const graphImages: string[] | undefined = undefined;
+        const graphDataJsons: string[] | undefined = undefined;
 
         // Auto-generate filename from input text  
         const autoFileName = inputText.split(' ').slice(0, 6).join(' ').substring(0, 50) + '...';
         
-        // Store assignment
+        // Store assignment with preview only
         const assignment = await storage.createAssignment({
           userId: null,
           sessionId: actualSessionId,
@@ -3735,23 +4085,24 @@ OUTPUT: Provide ONLY the perfected assignment text. No meta-commentary or explan
           fileName: autoFileName,
           extractedText: null,
           llmProvider,
-          llmResponse: llmResult.response,
+          llmResponse: previewResponse, // Store preview, not full answer
           referenceDocumentIds, // Include reference documents used
           graphData: graphDataJsons,
           graphImages: graphImages,
           processingTime,
           inputTokens,
-          outputTokens: actualOutputTokens,
+          outputTokens: finalOutputTokens,
         });
 
         const response: ProcessAssignmentResponse = {
           id: assignment.id,
           extractedText: inputText,
-          llmResponse: llmResult.response,
+          llmResponse: previewResponse, // Return preview to frontend
           graphData: graphDataJsons,
           graphImages: graphImages,
           processingTime,
           success: true,
+          isPreview: true, // Flag to indicate this is a preview
         };
 
         res.json(response);
@@ -3790,8 +4141,20 @@ OUTPUT: Provide ONLY the perfected assignment text. No meta-commentary or explan
         return res.status(404).json({ error: "User not found" });
       }
       
-      // Count input tokens for analytics
+      // Count tokens needed for regeneration
       const inputTokens = countTokens(assignment.inputText || '');
+      const estimatedOutputTokens = estimateOutputTokens(assignment.inputText || '');
+      const totalTokens = inputTokens + estimatedOutputTokens;
+      
+      console.log(`[UPGRADE DEBUG] User ${user.username} has ${user.tokenBalance} tokens, needs ${totalTokens} for upgrade`);
+      
+      // Check token balance (special case for unlimited users)
+      if (user.username !== 'jmkuczynski' && user.username !== 'randyjohnson' && (user.tokenBalance || 0) < totalTokens) {
+        return res.status(402).json({ 
+          error: "🔒 Insufficient credits to upgrade this assignment. [Buy More Credits]",
+          needsUpgrade: true 
+        });
+      }
       
       const startTime = Date.now();
       
@@ -3821,7 +4184,24 @@ OUTPUT: Provide ONLY the perfected assignment text. No meta-commentary or explan
       }
       
       const actualOutputTokens = countTokens(llmResult.response);
+      const actualTotalTokens = inputTokens + actualOutputTokens;
       const processingTime = Date.now() - startTime;
+      
+      // Deduct tokens (except for unlimited users)
+      if (user.username !== 'jmkuczynski' && user.username !== 'randyjohnson') {
+        console.log(`[UPGRADE DEDUCTION] Deducting ${actualTotalTokens} tokens from user ${user.username}`);
+        const newBalance = Math.max(0, (user.tokenBalance || 0) - actualTotalTokens);
+        await storage.updateUserTokenBalance(userId, newBalance);
+        
+        // Log token usage
+        await storage.createTokenUsage({
+          userId,
+          sessionId: null,
+          inputTokens,
+          outputTokens: actualOutputTokens,
+          remainingBalance: newBalance
+        });
+      }
       
       // Generate graphs if required
       let graphImages: string[] | undefined;
