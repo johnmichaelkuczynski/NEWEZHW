@@ -12,3 +12,27 @@ id = "Nz-fB5MMiRXnvVlbCkKV8"
 uri = "file://EZHW_COMPLETE_APP_BLUEPRINT.md"
 type = "text"
 title = "EZHW Complete App Blueprint"
+
+[[outputs]]
+id = "IfE-hHV7oIydmgI4u5ATF"
+uri = "file://attached_assets/generated_audio/music_ezhw_promo_bed.mp3"
+type = "audio"
+title = "ezhw promo bed"
+
+[[outputs]]
+id = "qRhv_v3xaJQ1GpzyHCvp4"
+uri = "file://attached_assets/generated_audio/speech_ezhw_promo_vo.mp3"
+type = "audio"
+title = "ezhw promo vo"
+
+[[outputs]]
+id = "HYSvhCvYN-9sxHcxQm43q"
+uri = "file://attached_assets/ezhw_promo.mp4"
+type = "video"
+title = "EZHW Promotional Video (28s, 1080p)"
+
+[[outputs]]
+id = "YuOZOehSs9aRujaW21A-m"
+uri = "file://attached_assets/ezhw_youtube_description.md"
+type = "text"
+title = "YouTube Description & Upload Kit"
