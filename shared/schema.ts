@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, timestamp, varchar, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, varchar, jsonb, json, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
@@ -31,6 +31,16 @@ export const dailyUsage = pgTable("daily_usage", {
   totalTokens: integer("total_tokens").default(0),
   createdAt: timestamp("created_at").defaultNow(),
 });
+
+// Session table managed by connect-pg-simple (createTableIfMissing).
+// Declared here so drizzle-kit push does not try to drop it.
+export const session = pgTable("session", {
+  sid: varchar("sid").primaryKey(),
+  sess: json("sess").notNull(),
+  expire: timestamp("expire", { precision: 6 }).notNull(),
+}, (table) => ({
+  expireIdx: index("IDX_session_expire").on(table.expire),
+}));
 
 // Reference documents table with proper user isolation
 export const referenceDocuments = pgTable("reference_documents", {
