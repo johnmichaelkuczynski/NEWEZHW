@@ -1,1 +1,2 @@
 - [Tractatus tiered memory](tractatus-memory.md) — CC long-doc coherence engine; tier node-id allocation must use max-suffix+1, never keys.length.
+- [CC per-job post-processing](cc-audit-feature.md) — adding features on finished CC jobs: capture jobId from complete SSE, inject provider in a thin wrapper, and enforce job ownership (IDOR risk).

@@ -28,7 +28,7 @@ import { fileProcessorService } from './services/fileProcessor';
 import { textChunkerService } from './services/textChunker';
 import { enrichWithPhilosophicalContentIfNeeded } from './services/philosopherApi';
 import { coherenceService } from './services/coherenceService';
-import { runCCPipeline, shouldUseCCPipeline, ensureCCTables } from './services/ccService';
+import { runCCPipeline, shouldUseCCPipeline, ensureCCTables, auditCCJob } from './services/ccService';
 
 // LLM imports
 // @ts-ignore
@@ -2620,6 +2620,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     res.end();
+  });
+
+  // On-demand audit of a long answer: cross-checks claims in a completed (or
+  // in-progress) CC job's output against the coherence memory, flagging
+  // contradictions and unsupported/hallucinated claims.
+  app.post('/api/audit-job', async (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) {
+      res.status(401).json({ error: 'Not authenticated' });
+      return;
+    }
+
+    const { jobId, text, provider = 'openai' } = req.body;
+
+    if (!jobId || typeof jobId !== 'string') {
+      res.status(400).json({ error: 'Missing jobId' });
+      return;
+    }
+
+    try {
+      const result = await auditCCJob(jobId, typeof text === 'string' ? text : undefined, provider, userId);
+      res.json({ success: true, ...result });
+    } catch (error: any) {
+      const status = error?.statusCode || 500;
+      console.error('[audit-job] Error:', error?.message || error);
+      res.status(status).json({ error: error?.message || 'Failed to audit job' });
+    }
   });
 
   // Test endpoint: Generate skeleton only (no chunk generation)

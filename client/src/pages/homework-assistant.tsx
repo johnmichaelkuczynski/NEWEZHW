@@ -14,7 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Send, Copy, Trash2, CheckCircle, History, Lightbulb, Download, Edit3, Save, X, ArrowDown, FileText, Mail, Printer, RotateCcw, Zap, Star } from "lucide-react";
+import { Loader2, Send, Copy, Trash2, CheckCircle, History, Lightbulb, Download, Edit3, Save, X, ArrowDown, FileText, Mail, Printer, RotateCcw, Zap, Star, ShieldCheck, AlertTriangle, HelpCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 import { UserButton } from "@clerk/clerk-react";
@@ -53,6 +53,9 @@ export default function HomeworkAssistant() {
   const [isChunkedProcessing, setIsChunkedProcessing] = useState(false);
   const [chunkProgress, setChunkProgress] = useState({ current: 0, total: 0 });
   const [accumulatedContent, setAccumulatedContent] = useState("");
+  const [ccJobId, setCcJobId] = useState<string | null>(null);
+  const [isAuditing, setIsAuditing] = useState(false);
+  const [auditResult, setAuditResult] = useState<any>(null);
   const [selectedSavedAssignment, setSelectedSavedAssignment] = useState("");
   const [assignmentsToDelete, setAssignmentsToDelete] = useState<Set<number>>(new Set());
   const [showDeleteMode, setShowDeleteMode] = useState(false);
@@ -878,6 +881,8 @@ ${fullResponse.slice(-1000)}...`;
           setAccumulatedContent(cleanedFullResponse);
           
           // Update the current result with accumulated content
+          setCcJobId(null);
+          setAuditResult(null);
           setCurrentResult((prev: any) => ({
             ...prev,
             llmResponse: cleanedFullResponse,
@@ -956,6 +961,8 @@ ${fullResponse.slice(-1000)}...`;
       return data;
     },
     onSuccess: (data) => {
+      setCcJobId(null);
+      setAuditResult(null);
       setCurrentResult(data);
       // Keep the extracted text in the input box so user can save it
       if (data.extractedText) {
@@ -1006,6 +1013,8 @@ ${fullResponse.slice(-1000)}...`;
       const cleanedResponse = data.llmResponse ? cleanMarkdown(data.llmResponse) : '';
       const cleanedData = { ...data, llmResponse: cleanedResponse };
       
+      setCcJobId(null);
+      setAuditResult(null);
       setCurrentResult(cleanedData);
       calculateWordCount(cleanedResponse);
       // Automatically analyze AI detection for the solution
@@ -1131,6 +1140,8 @@ ${fullResponse.slice(-1000)}...`;
     setAccumulatedContent("");
     setCoherenceSkeleton(null);
     setChunkProgress({ current: 0, total: 0 });
+    setCcJobId(null);
+    setAuditResult(null);
 
     const useCC = shouldUseCC(userPrompt, docText);
     const endpoint = useCC ? '/api/cc-stream' : '/api/coherent-stream';
@@ -1204,6 +1215,8 @@ ${fullResponse.slice(-1000)}...`;
                   });
                   calculateWordCount(cleanedResponse);
                   setCoherenceStatus("");
+                  setCcJobId(event.data.jobId || null);
+                  setAuditResult(null);
                   
                   toast({
                     title: "Document generated",
@@ -1228,6 +1241,46 @@ ${fullResponse.slice(-1000)}...`;
     } finally {
       setIsChunkedProcessing(false);
       setCoherenceStatus("");
+    }
+  };
+
+  // On-demand consistency / hallucination audit of a completed long answer.
+  const handleAuditAnswer = async () => {
+    if (!ccJobId) return;
+    setIsAuditing(true);
+    setAuditResult(null);
+    try {
+      const response = await fetch('/api/audit-job', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jobId: ccJobId,
+          text: currentResult?.llmResponse,
+          provider: selectedProvider,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to audit answer');
+      }
+
+      const data = await response.json();
+      setAuditResult(data);
+
+      const flagged = (data.summary?.contradicted || 0) + (data.summary?.unverifiable || 0);
+      toast({
+        title: flagged > 0 ? `${flagged} claim${flagged === 1 ? '' : 's'} flagged` : "No issues found",
+        description: `${data.summary?.verified || 0} verified · ${data.summary?.unverifiable || 0} unverifiable · ${data.summary?.contradicted || 0} contradicted`,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Audit failed",
+        description: err.message,
+        variant: "destructive",
+      });
+    } finally {
+      setIsAuditing(false);
     }
   };
 
@@ -2307,8 +2360,100 @@ ${fullResponse.slice(-1000)}...`;
                           <Copy className="w-4 h-4 mr-2" />
                           Copy
                         </Button>
+                        {ccJobId && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleAuditAnswer}
+                            disabled={isAuditing}
+                            className="border-violet-200 text-violet-700 hover:bg-violet-50"
+                            data-testid="button-audit-answer"
+                          >
+                            {isAuditing ? (
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            ) : (
+                              <ShieldCheck className="w-4 h-4 mr-2" />
+                            )}
+                            {isAuditing ? "Checking..." : "Check Consistency"}
+                          </Button>
+                        )}
                       </div>
                     </div>
+
+                    {/* CONSISTENCY / HALLUCINATION AUDIT RESULTS */}
+                    {auditResult && (
+                      <div className="mb-6 p-5 bg-violet-50 border-2 border-violet-200 rounded-xl" data-testid="panel-audit-result">
+                        <div className="flex items-center justify-between mb-3">
+                          <h4 className="text-md font-semibold text-violet-900 flex items-center">
+                            <ShieldCheck className="w-5 h-5 mr-2 text-violet-600" />
+                            Consistency Check
+                          </h4>
+                          <div className="flex items-center gap-2 text-xs">
+                            <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200" data-testid="badge-audit-verified">
+                              {auditResult.summary?.verified || 0} verified
+                            </Badge>
+                            <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200" data-testid="badge-audit-unverifiable">
+                              {auditResult.summary?.unverifiable || 0} unverifiable
+                            </Badge>
+                            <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200" data-testid="badge-audit-contradicted">
+                              {auditResult.summary?.contradicted || 0} contradicted
+                            </Badge>
+                          </div>
+                        </div>
+
+                        {auditResult.auditedWords === 0 ? (
+                          <p className="text-sm text-violet-700">
+                            No content was available to audit yet
+                            {auditResult.jobStatus ? ` (job status: ${auditResult.jobStatus})` : ''}.
+                          </p>
+                        ) : (() => {
+                          const flagged = (auditResult.claims || []).filter(
+                            (c: any) => c.status === 'CONTRADICTED' || c.status === 'UNVERIFIABLE'
+                          );
+                          if (flagged.length === 0) {
+                            return (
+                              <p className="text-sm text-green-700 flex items-center" data-testid="text-audit-clean">
+                                <CheckCircle className="w-4 h-4 mr-2" />
+                                No contradictions or unsupported claims were found.
+                              </p>
+                            );
+                          }
+                          return (
+                            <div className="space-y-3">
+                              <p className="text-xs text-violet-700">
+                                Showing {flagged.length} flagged claim{flagged.length === 1 ? '' : 's'}. Verified claims are omitted.
+                              </p>
+                              {flagged.map((claim: any, idx: number) => {
+                                const isContradicted = claim.status === 'CONTRADICTED';
+                                return (
+                                  <div
+                                    key={idx}
+                                    className={`p-3 rounded-lg border ${isContradicted ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'}`}
+                                    data-testid={`card-audit-claim-${idx}`}
+                                  >
+                                    <div className={`flex items-center text-xs font-semibold mb-1 ${isContradicted ? 'text-red-700' : 'text-amber-700'}`}>
+                                      {isContradicted ? (
+                                        <AlertTriangle className="w-3.5 h-3.5 mr-1.5" />
+                                      ) : (
+                                        <HelpCircle className="w-3.5 h-3.5 mr-1.5" />
+                                      )}
+                                      {isContradicted ? 'CONTRADICTED' : 'UNVERIFIABLE'}
+                                    </div>
+                                    <p className="text-sm text-slate-800">{claim.text}</p>
+                                    {Array.isArray(claim.evidence) && claim.evidence.length > 0 && (
+                                      <div className="mt-2 text-xs text-slate-600">
+                                        <span className="font-semibold">Conflicting memory: </span>
+                                        {claim.evidence.join(' · ')}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
                     
                     {/* Multiple Graphs Display - According to Multi-Graph Protocol */}
                     {currentResult.graphImages && Array.isArray(currentResult.graphImages) && currentResult.graphImages.length > 0 && (

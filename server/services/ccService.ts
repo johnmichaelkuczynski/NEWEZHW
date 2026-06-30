@@ -12,6 +12,7 @@
 import { pool } from '../db';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
+import { auditChunkAgainstMemory } from './tractatusMemory';
 
 // ============================================================================
 // CONSTANTS
@@ -813,6 +814,71 @@ export async function* runCCPipeline(
 
     yield { type: 'error', data: error.message ?? 'CC pipeline failed unexpectedly' };
   }
+}
+
+// ============================================================================
+// AUDIT — on-demand consistency / hallucination check of a job's output
+// ============================================================================
+
+export async function auditCCJob(
+  jobId: string,
+  text: string | undefined,
+  provider: string = 'openai',
+  userId?: number
+): Promise<{
+  jobStatus: string;
+  auditedWords: number;
+  claims: Array<{ text: string; status: string; evidence: string[] }>;
+  summary: { verified: number; unverifiable: number; contradicted: number };
+}> {
+  const job = await dbGetJob(jobId);
+  if (!job) {
+    const err: any = new Error('Job not found');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  // Object-level authorization: a job may only be audited by its owner.
+  if (userId !== undefined && job.user_id !== userId) {
+    const err: any = new Error('Job not found');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  // Prefer caller-supplied passage; otherwise use the final output, and if the
+  // job has not finished, fall back to whatever chunks have been produced so far.
+  let passage = (text && text.trim()) ? text.trim() : '';
+  if (!passage) {
+    passage = (job.final_output as string | null)?.trim() || '';
+  }
+  if (!passage) {
+    const chunks = await dbGetChunks(jobId);
+    passage = chunks
+      .filter(c => c.chunk_output_text)
+      .sort((a, b) => a.chunk_index - b.chunk_index)
+      .map(c => c.chunk_output_text as string)
+      .join('\n\n')
+      .trim();
+  }
+
+  if (!passage) {
+    return {
+      jobStatus: job.status,
+      auditedWords: 0,
+      claims: [],
+      summary: { verified: 0, unverifiable: 0, contradicted: 0 },
+    };
+  }
+
+  const callLLM = (s: string, u: string, m: number) => callProvider(s, u, provider, m);
+  const result = await auditChunkAgainstMemory(passage, jobId, callLLM, 'cc');
+
+  return {
+    jobStatus: job.status,
+    auditedWords: countWords(passage),
+    claims: result.claims,
+    summary: result.summary,
+  };
 }
 
 // ============================================================================
